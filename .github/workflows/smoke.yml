@@ -1,9 +1,0 @@
-name: Smoke
-on:
-  push: { branches: [ main ] }
-  pull_request: { branches: [ main ] }
-jobs:
-  ok:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Actions are wired up ✅"
