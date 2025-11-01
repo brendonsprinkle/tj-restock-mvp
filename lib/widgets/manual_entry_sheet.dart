@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/haptics_service.dart';
+import '../services/barcode_lookup_service.dart';
 import '../state/app_state.dart';
 
 class ManualEntrySheet extends ConsumerStatefulWidget {
@@ -40,10 +41,26 @@ class _ManualEntrySheetState extends ConsumerState<ManualEntrySheet> {
 
     final barcode = _barcodeController.text.trim();
     final label = _labelController.text.trim();
+    
+    final lookupService = BarcodeLookupService();
+    String displayText;
+    
+    if (barcode.isNotEmpty && label.isNotEmpty) {
+      final existingProduct = lookupService.lookupBarcode(barcode);
+      if (existingProduct == null) {
+        await lookupService.addUserBarcode(barcode, label);
+      }
+      displayText = label;
+    } else if (barcode.isNotEmpty) {
+      final existingProduct = lookupService.lookupBarcode(barcode);
+      displayText = existingProduct ?? barcode;
+    } else {
+      displayText = 'manual:$label';
+    }
 
     final notifier = ref.read(pickEntriesProvider.notifier);
     final added = await notifier.addEntry(
-      barcodeOrText: barcode.isEmpty ? 'manual:$label' : barcode,
+      barcodeOrText: displayText,
       labelText: label.isEmpty ? null : label,
       sectionId: selectedSection.id,
     );

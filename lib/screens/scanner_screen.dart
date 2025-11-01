@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/mobile_scanner_adapter.dart';
 import '../services/haptics_service.dart';
+import '../services/barcode_lookup_service.dart';
 import '../state/app_state.dart';
 import '../widgets/manual_entry_sheet.dart';
 
@@ -65,18 +66,28 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   }
 
   Future<void> _addEntry(String barcode, String sectionId) async {
+    final lookupService = BarcodeLookupService();
+    final productName = lookupService.lookupBarcode(barcode);
+    
+    final displayText = productName ?? barcode;
+    
     final notifier = ref.read(pickEntriesProvider.notifier);
     final added = await notifier.addEntry(
-      barcodeOrText: barcode,
+      barcodeOrText: displayText,
+      labelText: productName != null ? null : barcode,
       sectionId: sectionId,
     );
 
     if (added) {
       await HapticsService.success();
       if (mounted) {
+        final message = productName != null 
+            ? 'Added: $productName'
+            : 'Added: $barcode (unknown product)';
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Added: $barcode'),
+            content: Text(message),
             duration: const Duration(seconds: 2),
             action: SnackBarAction(
               label: 'Undo',
