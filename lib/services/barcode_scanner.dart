@@ -1,14 +1,20 @@
-/// Abstraction for a barcode scanner. Allows swapping scanner implementations.
 abstract class BarcodeScanner {
-  /// Starts scanning and emits barcodes through a callback.
-  void start({required Function(String barcode) onScanned});
+  Stream<ScanResult> get results;
+  Future<void> start();
+  Future<void> stop();
+  Future<void> dispose();
+  Future<void> toggleTorch();
+  bool get isTorchOn;
+}
 
-  /// Pauses scanning.
-  void pause();
+class ScanResult {
+  final String barcode;
+  final String format;
+  final DateTime timestamp;
 
-  /// Resumes scanning.
-  void resume();
-
-  /// Disposes resources.
-  void dispose();
+  ScanResult({
+    required this.barcode,
+    required this.format,
+    required this.timestamp,
+  });
 }

@@ -1,9 +1,19 @@
 import 'package:flutter/services.dart';
 
-/// Provides haptic feedback for user interactions.
 class HapticsService {
-  /// Vibrates lightly to indicate success (e.g., barcode scanned).
-  Future<void> success() async {
+  static Future<void> success() async {
+    await HapticFeedback.mediumImpact();
+  }
+
+  static Future<void> error() async {
+    await HapticFeedback.heavyImpact();
+  }
+
+  static Future<void> light() async {
     await HapticFeedback.lightImpact();
+  }
+
+  static Future<void> selection() async {
+    await HapticFeedback.selectionClick();
   }
 }

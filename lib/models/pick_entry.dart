@@ -2,23 +2,13 @@ import 'package:hive/hive.dart';
 
 part 'pick_entry.g.dart';
 
-/// Represents an entry in the pick list.
 @HiveType(typeId: 1)
 class PickEntry extends HiveObject {
-  PickEntry({
-    required this.id,
-    required this.barcode,
-    this.labelText,
-    required this.sectionId,
-    this.qty = 1,
-    DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
-
   @HiveField(0)
   final String id;
 
   @HiveField(1)
-  final String barcode;
+  final String barcodeOrText;
 
   @HiveField(2)
   final String? labelText;
@@ -32,13 +22,30 @@ class PickEntry extends HiveObject {
   @HiveField(5)
   final DateTime createdAt;
 
-  /// Increase quantity by 1.
-  void increment() => qty++;
+  PickEntry({
+    required this.id,
+    required this.barcodeOrText,
+    this.labelText,
+    required this.sectionId,
+    this.qty = 1,
+    required this.createdAt,
+  });
 
-  /// Decrease quantity by 1. Minimum is 1.
-  void decrement() {
-    if (qty > 1) {
-      qty--;
-    }
+  PickEntry copyWith({
+    String? id,
+    String? barcodeOrText,
+    String? labelText,
+    String? sectionId,
+    int? qty,
+    DateTime? createdAt,
+  }) {
+    return PickEntry(
+      id: id ?? this.id,
+      barcodeOrText: barcodeOrText ?? this.barcodeOrText,
+      labelText: labelText ?? this.labelText,
+      sectionId: sectionId ?? this.sectionId,
+      qty: qty ?? this.qty,
+      createdAt: createdAt ?? this.createdAt,
+    );
   }
 }

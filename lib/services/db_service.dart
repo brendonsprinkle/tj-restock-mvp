@@ -1,70 +1,86 @@
-import 'package:flutter/foundation.dart';
-import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
-import '../models/section.dart';
 import '../models/pick_entry.dart';
+import '../models/section.dart';
 
-/// Keys for Hive boxes.
-const String kSectionsBox = 'sections_box';
-const String kPicksBox = 'picks_box';
-
-/// Database service for sections and pick entries using Hive.
 class DbService {
-  bool _initialized = false;
+  static const String _pickEntriesBox = 'pick_entries';
+  static const String _sectionsBox = 'sections';
 
-  Future<void> init() async {
-    if (_initialized) return;
+  static Future<void> init() async {
     await Hive.initFlutter();
-    // Register adapters if not already registered.
-    if (!Hive.isAdapterRegistered(SectionAdapter().typeId)) {
-      Hive.registerAdapter(SectionAdapter());
-    }
-    if (!Hive.isAdapterRegistered(PickEntryAdapter().typeId)) {
-      Hive.registerAdapter(PickEntryAdapter());
-    }
-    await Hive.openBox<Section>(kSectionsBox);
-    await Hive.openBox<PickEntry>(kPicksBox);
-    _initialized = true;
+    
+    Hive.registerAdapter(SectionAdapter());
+    Hive.registerAdapter(PickEntryAdapter());
+    
+    await Hive.openBox<PickEntry>(_pickEntriesBox);
+    await Hive.openBox<Section>(_sectionsBox);
+    
+    await _initializeSections();
   }
 
-  Box<Section> get _sectionsBox => Hive.box<Section>(kSectionsBox);
-  Box<PickEntry> get _picksBox => Hive.box<PickEntry>(kPicksBox);
-
-  /// Returns a list of all sections.
-  List<Section> getAllSections() {
-    return _sectionsBox.values.toList();
-  }
-
-  /// Seeds default sections if none exist.
-  Future<void> seedSections(List<Section> sections) async {
-    if (_sectionsBox.isEmpty) {
-      await _sectionsBox.addAll(sections);
+  static Future<void> _initializeSections() async {
+    final sectionsBox = Hive.box<Section>(_sectionsBox);
+    
+    if (sectionsBox.isEmpty) {
+      final defaultSections = Section.getDefaultSections();
+      for (var section in defaultSections) {
+        await sectionsBox.put(section.id, section);
+      }
     }
   }
 
-  /// Adds a pick entry.
-  Future<void> addPick(PickEntry entry) async {
-    await _picksBox.put(entry.id, entry);
+  static Box<PickEntry> get pickEntriesBox => Hive.box<PickEntry>(_pickEntriesBox);
+  static Box<Section> get sectionsBox => Hive.box<Section>(_sectionsBox);
+
+  static Future<void> addPickEntry(PickEntry entry) async {
+    await pickEntriesBox.put(entry.id, entry);
   }
 
-  /// Updates an existing pick entry.
-  Future<void> updatePick(PickEntry entry) async {
-    await entry.save();
+  static Future<void> updatePickEntry(PickEntry entry) async {
+    await pickEntriesBox.put(entry.id, entry);
   }
 
-  /// Removes a pick entry by key.
-  Future<void> deletePick(String id) async {
-    await _picksBox.delete(id);
+  static Future<void> deletePickEntry(String id) async {
+    await pickEntriesBox.delete(id);
   }
 
-  /// Clears all picks.
-  Future<void> clearPicks() async {
-    await _picksBox.clear();
+  static List<PickEntry> getAllPickEntries() {
+    return pickEntriesBox.values.toList();
   }
 
-  /// Returns all pick entries.
-  List<PickEntry> getAllPicks() {
-    return _picksBox.values.toList();
+  static List<PickEntry> getPickEntriesBySection(String sectionId) {
+    return pickEntriesBox.values
+        .where((entry) => entry.sectionId == sectionId)
+        .toList();
+  }
+
+  static Future<void> clearAllPickEntries() async {
+    await pickEntriesBox.clear();
+  }
+
+  static List<Section> getAllSections() {
+    return sectionsBox.values.toList();
+  }
+
+  static Section? getSectionById(String id) {
+    return sectionsBox.get(id);
+  }
+
+  static PickEntry? getPickEntryByBarcode(String barcode, String sectionId) {
+    return pickEntriesBox.values.firstWhere(
+      (entry) => entry.barcodeOrText == barcode && entry.sectionId == sectionId,
+      orElse: () => PickEntry(
+        id: '',
+        barcodeOrText: '',
+        sectionId: '',
+        createdAt: DateTime.now(),
+      ),
+    );
+  }
+
+  static bool hasPickEntryWithBarcode(String barcode, String sectionId) {
+    return pickEntriesBox.values.any(
+      (entry) => entry.barcodeOrText == barcode && entry.sectionId == sectionId,
+    );
   }
 }

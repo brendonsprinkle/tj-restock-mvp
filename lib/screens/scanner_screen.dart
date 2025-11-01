@@ -1,17 +1,12 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-
-import '../models/section.dart';
-import '../providers/pick_list_provider.dart';
-import '../providers/section_providers.dart';
+import '../services/mobile_scanner_adapter.dart';
 import '../services/haptics_service.dart';
-import '../services/scanner_service.dart';
-import 'pick_list_screen.dart';
+import '../state/app_state.dart';
+import '../widgets/manual_entry_sheet.dart';
 
-/// Scanner screen for capturing barcodes and adding to pick list.
 class ScannerScreen extends ConsumerStatefulWidget {
   const ScannerScreen({super.key});
 
@@ -20,53 +15,101 @@ class ScannerScreen extends ConsumerStatefulWidget {
 }
 
 class _ScannerScreenState extends ConsumerState<ScannerScreen> {
-  late final MobileScannerService _scanner;
-  late final HapticsService _haptics;
-  String? _lastBarcode;
-  Timer? _debounceTimer;
-  bool _torchOn = false;
-  int _quickQty = 1;
+  late MobileScannerAdapter _scannerAdapter;
+  StreamSubscription? _scanSubscription;
+  bool _isTorchOn = false;
+  String? _lastScannedBarcode;
+  DateTime? _lastScanTime;
+  static const Duration _debounceDuration = Duration(milliseconds: 1500);
 
   @override
   void initState() {
     super.initState();
-    _scanner = MobileScannerService();
-    _haptics = HapticsService();
-    _scanner.start(onScanned: _onBarcodeScanned);
+    _scannerAdapter = MobileScannerAdapter();
+    _initScanner();
   }
 
-  void _onBarcodeScanned(String barcode) {
-    // Debounce duplicates within 1.5 seconds.
-    if (_lastBarcode == barcode && _debounceTimer?.isActive == true) {
+  Future<void> _initScanner() async {
+    await _scannerAdapter.start();
+    _scanSubscription = _scannerAdapter.results.listen(_handleScanResult);
+  }
+
+  void _handleScanResult(result) {
+    final barcode = result.barcode;
+    final now = DateTime.now();
+
+    if (_lastScannedBarcode == barcode &&
+        _lastScanTime != null &&
+        now.difference(_lastScanTime!) < _debounceDuration) {
+      _showDuplicateChip(barcode);
       return;
     }
-    _lastBarcode = barcode;
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 1500), () {
-      _lastBarcode = null;
-    });
-    _haptics.success();
-    final section = ref.read(selectedSectionProvider);
-    if (section != null) {
-      ref.read(pickListProvider.notifier).addEntry(
-        barcode,
-        section.id,
-      );
+
+    _lastScannedBarcode = barcode;
+    _lastScanTime = now;
+
+    final selectedSection = ref.read(selectedSectionProvider);
+    if (selectedSection == null) {
+      _showError('Please select a section first');
+      return;
+    }
+
+    final notifier = ref.read(pickEntriesProvider.notifier);
+    final hasEntry = notifier.hasEntryWithBarcode(barcode, selectedSection.id);
+
+    if (hasEntry) {
+      _showDuplicateChip(barcode);
+    } else {
+      _addEntry(barcode, selectedSection.id);
+    }
+  }
+
+  Future<void> _addEntry(String barcode, String sectionId) async {
+    final notifier = ref.read(pickEntriesProvider.notifier);
+    final added = await notifier.addEntry(
+      barcodeOrText: barcode,
+      sectionId: sectionId,
+    );
+
+    if (added) {
+      await HapticsService.success();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added: $barcode'),
+            duration: const Duration(seconds: 2),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () {
+                final lastEntry = notifier.getLastEntry();
+                if (lastEntry != null) {
+                  notifier.deleteEntry(lastEntry.id);
+                }
+              },
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showDuplicateChip(String barcode) {
+    final selectedSection = ref.read(selectedSectionProvider);
+    if (selectedSection == null) return;
+
+    final notifier = ref.read(pickEntriesProvider.notifier);
+    final entry = notifier.getEntryByBarcode(barcode, selectedSection.id);
+
+    if (entry != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Added $barcode'),
+          content: Text('Already added: $barcode'),
+          duration: const Duration(seconds: 2),
           action: SnackBarAction(
-            label: 'UNDO',
+            label: '+1',
             onPressed: () {
-              // Undo by removing the last entry with same barcode.
-              final picks = ref.read(pickListProvider);
-              final toRemove = picks.lastWhere(
-                (p) => p.barcode == barcode,
-                orElse: () => picks.isNotEmpty ? picks.last : null,
-              );
-              if (toRemove != null) {
-                ref.read(pickListProvider.notifier).deleteEntry(toRemove);
-              }
+              notifier.incrementQuantity(entry.id);
+              HapticsService.light();
             },
           ),
         ),
@@ -74,112 +117,107 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     }
   }
 
+  void _showError(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleTorch() async {
+    await _scannerAdapter.toggleTorch();
+    setState(() {
+      _isTorchOn = !_isTorchOn;
+    });
+    await HapticsService.light();
+  }
+
+  void _showManualEntry() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => const ManualEntrySheet(),
+    );
+  }
+
   @override
   void dispose() {
-    _scanner.dispose();
-    _debounceTimer?.cancel();
+    _scanSubscription?.cancel();
+    _scannerAdapter.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final Section? section = ref.watch(selectedSectionProvider);
+    final selectedSection = ref.watch(selectedSectionProvider);
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(section?.name ?? 'Scanner'),
-        actions: [
-          IconButton(
-            icon: Icon(_torchOn ? Icons.flash_off : Icons.flash_on),
-            onPressed: () {
-              setState(() {
-                _torchOn = !_torchOn;
-                _scanner.controller.toggleTorch();
-              });
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.list),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const PickListScreen()),
-              );
-            },
-          ),
-        ],
+        title: Text(selectedSection?.name ?? 'Scanner'),
+        backgroundColor: Colors.black87,
+        foregroundColor: Colors.white,
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: MobileScanner(
-              controller: _scanner.controller,
+          MobileScanner(
+            controller: _scannerAdapter.controller,
+            onDetect: (capture) {
+              if (capture.barcodes.isNotEmpty) {
+                final barcode = capture.barcodes.first;
+                if (barcode.rawValue != null) {
+                  _handleScanResult(_scannerAdapter.results);
+                }
+              }
+            },
+          ),
+          Positioned(
+            top: 20,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Point camera at barcode',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                ),
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
+          Positioned(
+            bottom: 100,
+            left: 0,
+            right: 0,
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                IconButton(
-                  icon: const Icon(Icons.remove),
-                  onPressed: () {
-                    setState(() {
-                      if (_quickQty > 1) _quickQty--;
-                    });
-                  },
+                FloatingActionButton(
+                  heroTag: 'torch',
+                  onPressed: _toggleTorch,
+                  backgroundColor: _isTorchOn ? Colors.yellow : Colors.white,
+                  child: Icon(
+                    _isTorchOn ? Icons.flash_on : Icons.flash_off,
+                    color: Colors.black,
+                  ),
                 ),
-                Text('$_quickQty', style: const TextStyle(fontSize: 18)),
-                IconButton(
-                  icon: const Icon(Icons.add),
-                  onPressed: () {
-                    setState(() {
-                      _quickQty++;
-                    });
-                  },
+                FloatingActionButton.extended(
+                  heroTag: 'manual',
+                  onPressed: _showManualEntry,
+                  backgroundColor: Colors.blue,
+                  icon: const Icon(Icons.keyboard),
+                  label: const Text('Manual Entry'),
                 ),
               ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: ElevatedButton(
-              onPressed: () async {
-                // Prompt manual entry via dialog.
-                final controller = TextEditingController();
-                final result = await showDialog<String?>(
-                  context: context,
-                  builder: (context) {
-                    return AlertDialog(
-                      title: const Text('Manual Entry'),
-                      content: TextField(
-                        controller: controller,
-                        decoration: const InputDecoration(
-                          hintText: 'Enter barcode',
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Cancel'),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, controller.text),
-                          child: const Text('Add'),
-                        ),
-                      ],
-                    );
-                  },
-                );
-                if (result != null && result.isNotEmpty) {
-                  final currentSection = ref.read(selectedSectionProvider);
-                  if (currentSection != null) {
-                    await ref.read(pickListProvider.notifier).addEntry(
-                      result,
-                      currentSection.id,
-                    );
-                  }
-                }
-              },
-              child: const Text('Manual Entry'),
             ),
           ),
         ],
