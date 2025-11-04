@@ -267,9 +267,41 @@ class _PickListScreenState extends ConsumerState<PickListScreen> {
           children: [
             IconButton(
               icon: const Icon(Icons.remove_circle_outline),
-              onPressed: () {
-                ref.read(pickEntriesProvider.notifier).decrementQuantity(entry.id);
-                HapticsService.light();
+              onPressed: () async {
+                if (entry.qty > 1) {
+                  ref.read(pickEntriesProvider.notifier).decrementQuantity(entry.id);
+                  HapticsService.light();
+                } else {
+                  // Capture entry data before deletion for Undo
+                  final barcode = entry.barcodeOrText;
+                  final label = entry.labelText;
+                  final sectionId = entry.sectionId;
+                  
+                  // Delete the entry
+                  await ref.read(pickEntriesProvider.notifier).deleteEntry(entry.id);
+                  await HapticsService.success();
+                  
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Removed: ${label ?? barcode}'),
+                        duration: const Duration(seconds: 2),
+                        action: SnackBarAction(
+                          label: 'Undo',
+                          onPressed: () async {
+                            await ref.read(pickEntriesProvider.notifier).addEntry(
+                              barcodeOrText: barcode,
+                              labelText: label,
+                              sectionId: sectionId,
+                              qty: 1,
+                            );
+                            HapticsService.success();
+                          },
+                        ),
+                      ),
+                    );
+                  }
+                }
               },
             ),
             Text(

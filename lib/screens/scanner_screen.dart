@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/mobile_scanner_adapter.dart';
+import '../services/barcode_scanner.dart';
 import '../services/haptics_service.dart';
 import '../services/beverage_db_service.dart';
 import '../state/app_state.dart';
@@ -22,6 +23,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   bool _isTorchOn = false;
   String? _lastScannedBarcode;
   DateTime? _lastScanTime;
+  bool _dialogOpen = false;
   static const Duration _debounceDuration = Duration(milliseconds: 1500);
 
   @override
@@ -36,7 +38,9 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     _scanSubscription = _scannerAdapter.results.listen(_handleScanResult);
   }
 
-  void _handleScanResult(result) {
+  void _handleScanResult(ScanResult result) {
+    if (_dialogOpen) return;
+    
     final barcode = result.barcode;
     final now = DateTime.now();
 
@@ -73,7 +77,8 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     if (productName != null) {
       final notifier = ref.read(pickEntriesProvider.notifier);
       final added = await notifier.addEntry(
-        barcodeOrText: productName,
+        barcodeOrText: barcode,
+        labelText: productName,
         sectionId: sectionId,
       );
 
@@ -131,7 +136,8 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                   
                   final notifier = ref.read(pickEntriesProvider.notifier);
                   await notifier.addEntry(
-                    barcodeOrText: value.trim(),
+                    barcodeOrText: barcode,
+                    labelText: value.trim(),
                     sectionId: sectionId,
                   );
                   
@@ -164,7 +170,8 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 
                 final notifier = ref.read(pickEntriesProvider.notifier);
                 await notifier.addEntry(
-                  barcodeOrText: value,
+                  barcodeOrText: barcode,
+                  labelText: value,
                   sectionId: sectionId,
                 );
                 
@@ -195,15 +202,17 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     final entry = notifier.getEntryByBarcode(barcode, selectedSection.id);
 
     if (entry != null && mounted) {
-      _showQuantityDialog(entry.barcodeOrText, entry.id);
+      _showQuantityDialog(entry.labelText ?? entry.barcodeOrText, entry.id);
     }
   }
 
   void _showQuantityDialog(String productName, String entryId) {
+    _dialogOpen = true;
     final controller = TextEditingController(text: '1');
     
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: Text(productName),
         content: Column(
@@ -228,6 +237,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                     notifier.incrementQuantity(entryId);
                   }
                   HapticsService.success();
+                  _dialogOpen = false;
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -247,6 +257,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                     final notifier = ref.read(pickEntriesProvider.notifier);
                     notifier.incrementQuantity(entryId);
                     HapticsService.light();
+                    _dialogOpen = false;
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -263,6 +274,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                     notifier.incrementQuantity(entryId);
                     notifier.incrementQuantity(entryId);
                     HapticsService.light();
+                    _dialogOpen = false;
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -280,6 +292,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                       notifier.incrementQuantity(entryId);
                     }
                     HapticsService.light();
+                    _dialogOpen = false;
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -296,7 +309,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              _dialogOpen = false;
+              Navigator.pop(context);
+            },
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -308,6 +324,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                   notifier.incrementQuantity(entryId);
                 }
                 HapticsService.success();
+                _dialogOpen = false;
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -393,14 +410,6 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         children: [
           MobileScanner(
             controller: _scannerAdapter.controller,
-            onDetect: (capture) {
-              if (capture.barcodes.isNotEmpty) {
-                final barcode = capture.barcodes.first;
-                if (barcode.rawValue != null) {
-                  _handleScanResult(_scannerAdapter.results);
-                }
-              }
-            },
           ),
           Positioned(
             top: 20,
