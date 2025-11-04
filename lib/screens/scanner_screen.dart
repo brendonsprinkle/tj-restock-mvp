@@ -210,12 +210,18 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
   void _showQuantityDialog(String productName, String entryId) {
     _dialogOpen = true;
-    dlog('QuantityDialog: opened for $productName/$entryId');
-    final controller = TextEditingController(text: '1');
     
-    // Helper to handle quantity addition with validation
-    Future<void> handleQuantityAdd(int? qty) async {
-      if (qty == null) {
+    // Get current quantity to pre-fill the dialog
+    final entries = ref.read(pickEntriesProvider);
+    final entry = entries.firstWhere((e) => e.id == entryId);
+    final currentQty = entry.qty;
+    
+    dlog('QuantityDialog: opened for $productName/$entryId (current qty=$currentQty)');
+    final controller = TextEditingController(text: currentQty.toString());
+    
+    // Helper to handle setting total quantity with validation
+    Future<void> handleSetQuantity(int? newTotal) async {
+      if (newTotal == null) {
         dlog('QuantityDialog: invalid quantity (null)');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -226,9 +232,20 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         return;
       }
       
-      if (qty == 0) {
-        // Delete item with Undo (matches minus-to-zero behavior)
-        dlog('QuantityDialog: delete via qty=0');
+      if (newTotal < 0) {
+        dlog('QuantityDialog: invalid quantity (negative)');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Quantity cannot be negative'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+        return;
+      }
+      
+      if (newTotal == 0) {
+        // Delete item with Undo (restores previous quantity)
+        dlog('QuantityDialog: delete via qty=0 (previous qty=$currentQty)');
         final notifier = ref.read(pickEntriesProvider.notifier);
         final entries = ref.read(pickEntriesProvider);
         final entry = entries.firstWhere((e) => e.id == entryId);
@@ -236,6 +253,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         final barcode = entry.barcodeOrText;
         final label = entry.labelText;
         final sectionId = entry.sectionId;
+        final prevQty = entry.qty;
         
         await notifier.deleteEntry(entryId);
         await HapticsService.success();
@@ -250,12 +268,12 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               action: SnackBarAction(
                 label: 'Undo',
                 onPressed: () async {
-                  dlog('QuantityDialog: undo delete');
+                  dlog('QuantityDialog: undo delete (restoring qty=$prevQty)');
                   await notifier.addEntry(
                     barcodeOrText: barcode,
                     labelText: label,
                     sectionId: sectionId,
-                    qty: 1,
+                    qty: prevQty,
                   );
                   HapticsService.success();
                 },
@@ -266,18 +284,24 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         return;
       }
       
-      if (qty > 0) {
-        dlog('QuantityDialog: add qty=$qty');
-        final notifier = ref.read(pickEntriesProvider.notifier);
-        for (var i = 0; i < qty; i++) {
-          notifier.incrementQuantity(entryId);
+      if (newTotal > 0) {
+        if (newTotal == currentQty) {
+          // No change, just close dialog
+          dlog('QuantityDialog: no change (qty=$currentQty)');
+          _dialogOpen = false;
+          Navigator.pop(context);
+          return;
         }
-        HapticsService.success();
+        
+        dlog('QuantityDialog: set total qty=$newTotal (was $currentQty)');
+        final notifier = ref.read(pickEntriesProvider.notifier);
+        await notifier.updateQuantity(entryId, newTotal);
+        await HapticsService.success();
         _dialogOpen = false;
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Added $qty more'),
+            content: Text('Set quantity to $newTotal'),
             duration: const Duration(seconds: 1),
           ),
         );
@@ -292,7 +316,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('How many more? (0 to delete)'),
+            const Text('How many total? (0 to delete)'),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
@@ -301,13 +325,13 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               textInputAction: TextInputAction.done,
               decoration: const InputDecoration(
-                labelText: 'Quantity',
+                labelText: 'Total Quantity',
                 hintText: '0 to delete',
                 border: OutlineInputBorder(),
               ),
               onSubmitted: (value) async {
                 final qty = int.tryParse(value);
-                await handleQuantityAdd(qty);
+                await handleSetQuantity(qty);
               },
             ),
             const SizedBox(height: 16),
@@ -316,24 +340,24 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               children: [
                 ElevatedButton(
                   onPressed: () async {
-                    dlog('QuantityDialog: +1');
-                    await handleQuantityAdd(1);
+                    dlog('QuantityDialog: set to 1');
+                    await handleSetQuantity(1);
                   },
-                  child: const Text('+1'),
+                  child: const Text('1'),
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    dlog('QuantityDialog: +2');
-                    await handleQuantityAdd(2);
+                    dlog('QuantityDialog: set to 2');
+                    await handleSetQuantity(2);
                   },
-                  child: const Text('+2'),
+                  child: const Text('2'),
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    dlog('QuantityDialog: +5');
-                    await handleQuantityAdd(5);
+                    dlog('QuantityDialog: set to 5');
+                    await handleSetQuantity(5);
                   },
-                  child: const Text('+5'),
+                  child: const Text('5'),
                 ),
               ],
             ),
@@ -351,9 +375,9 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
           ElevatedButton(
             onPressed: () async {
               final qty = int.tryParse(controller.text);
-              await handleQuantityAdd(qty);
+              await handleSetQuantity(qty);
             },
-            child: const Text('Add'),
+            child: const Text('Set'),
           ),
         ],
       ),
