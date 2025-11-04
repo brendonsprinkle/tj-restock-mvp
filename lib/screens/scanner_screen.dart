@@ -195,20 +195,133 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     final entry = notifier.getEntryByBarcode(barcode, selectedSection.id);
 
     if (entry != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Already added: $barcode'),
-          duration: const Duration(seconds: 2),
-          action: SnackBarAction(
-            label: '+1',
-            onPressed: () {
-              notifier.incrementQuantity(entry.id);
-              HapticsService.light();
-            },
-          ),
-        ),
-      );
+      _showQuantityDialog(entry.barcodeOrText, entry.id);
     }
+  }
+
+  void _showQuantityDialog(String productName, String entryId) {
+    final controller = TextEditingController(text: '1');
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(productName),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('How many more?'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                labelText: 'Quantity',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (value) {
+                final quantity = int.tryParse(value);
+                if (quantity != null && quantity > 0) {
+                  final notifier = ref.read(pickEntriesProvider.notifier);
+                  for (var i = 0; i < quantity; i++) {
+                    notifier.incrementQuantity(entryId);
+                  }
+                  HapticsService.success();
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Added $quantity more'),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                }
+              },
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    final notifier = ref.read(pickEntriesProvider.notifier);
+                    notifier.incrementQuantity(entryId);
+                    HapticsService.light();
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Added 1 more'),
+                        duration: Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                  child: const Text('+1'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final notifier = ref.read(pickEntriesProvider.notifier);
+                    notifier.incrementQuantity(entryId);
+                    notifier.incrementQuantity(entryId);
+                    HapticsService.light();
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Added 2 more'),
+                        duration: Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                  child: const Text('+2'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final notifier = ref.read(pickEntriesProvider.notifier);
+                    for (var i = 0; i < 5; i++) {
+                      notifier.incrementQuantity(entryId);
+                    }
+                    HapticsService.light();
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Added 5 more'),
+                        duration: Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                  child: const Text('+5'),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final quantity = int.tryParse(controller.text);
+              if (quantity != null && quantity > 0) {
+                final notifier = ref.read(pickEntriesProvider.notifier);
+                for (var i = 0; i < quantity; i++) {
+                  notifier.incrementQuantity(entryId);
+                }
+                HapticsService.success();
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Added $quantity more'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -255,6 +368,13 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         backgroundColor: Colors.black87,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.list),
+            onPressed: () {
+              Navigator.pushNamed(context, '/picklist');
+            },
+            tooltip: 'View Pick List',
+          ),
           IconButton(
             icon: const Icon(Icons.storage),
             onPressed: () {
