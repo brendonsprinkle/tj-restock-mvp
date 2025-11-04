@@ -24,8 +24,13 @@ class BeverageDbService {
 
   Future<void> _loadBaseDatabase() async {
     try {
-      final csvString = await rootBundle.loadString('assets/TJ_Beverage_SKU_CSV.csv');
-      final List<List<dynamic>> csvData = const CsvToListConverter().convert(csvString);
+      final raw = await rootBundle.loadString('assets/TJ_Beverage_SKU_CSV.csv');
+      print('CSV raw length: ${raw.length} chars');
+      
+      final csvString = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      final List<List<dynamic>> csvData = const CsvToListConverter(eol: '\n').convert(csvString);
+      
+      print('CSV parsed rows (including header): ${csvData.length}');
       
       for (var i = 1; i < csvData.length; i++) {
         if (csvData[i].isEmpty) continue;
@@ -42,6 +47,10 @@ class BeverageDbService {
       }
       
       print('Loaded ${_database.length} products from base beverage database');
+      print('Has SKU 60600? ${_database.containsKey('60600')}');
+      if (_database.containsKey('60600')) {
+        print('60600 maps to: ${_database['60600']}');
+      }
     } catch (e) {
       print('Error loading base beverage database: $e');
     }
@@ -135,8 +144,9 @@ class BeverageDbService {
     final Set<String> baseSkus = {};
     
     try {
-      final csvString = await rootBundle.loadString('assets/TJ_Beverage_SKU_CSV.csv');
-      final List<List<dynamic>> csvData = const CsvToListConverter().convert(csvString);
+      final raw = await rootBundle.loadString('assets/TJ_Beverage_SKU_CSV.csv');
+      final csvString = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      final List<List<dynamic>> csvData = const CsvToListConverter(eol: '\n').convert(csvString);
       
       for (var i = 1; i < csvData.length; i++) {
         if (csvData[i].isEmpty) continue;
