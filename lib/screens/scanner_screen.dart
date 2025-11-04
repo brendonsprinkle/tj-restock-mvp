@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/mobile_scanner_adapter.dart';
 import '../services/haptics_service.dart';
+import '../services/beverage_db_service.dart';
 import '../state/app_state.dart';
 import '../widgets/manual_entry_sheet.dart';
+import 'view_edit_db_screen.dart';
 
 class ScannerScreen extends ConsumerStatefulWidget {
   const ScannerScreen({super.key});
@@ -65,32 +67,124 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   }
 
   Future<void> _addEntry(String barcode, String sectionId) async {
-    final notifier = ref.read(pickEntriesProvider.notifier);
-    final added = await notifier.addEntry(
-      barcodeOrText: barcode,
-      sectionId: sectionId,
-    );
+    final beverageDb = BeverageDbService.instance;
+    final productName = beverageDb.lookupByBarcode(barcode);
+    
+    if (productName != null) {
+      final notifier = ref.read(pickEntriesProvider.notifier);
+      final added = await notifier.addEntry(
+        barcodeOrText: productName,
+        sectionId: sectionId,
+      );
 
-    if (added) {
-      await HapticsService.success();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Added: $barcode'),
-            duration: const Duration(seconds: 2),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: () {
-                final lastEntry = notifier.getLastEntry();
-                if (lastEntry != null) {
-                  notifier.deleteEntry(lastEntry.id);
+      if (added) {
+        await HapticsService.success();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Added: $productName'),
+              duration: const Duration(seconds: 2),
+              action: SnackBarAction(
+                label: 'Undo',
+                onPressed: () {
+                  final lastEntry = notifier.getLastEntry();
+                  if (lastEntry != null) {
+                    notifier.deleteEntry(lastEntry.id);
+                  }
+                },
+              ),
+            ),
+          );
+        }
+      }
+    } else {
+      _showFastManualEntry(barcode, sectionId);
+    }
+  }
+
+  void _showFastManualEntry(String barcode, String sectionId) {
+    final controller = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unknown Product'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Barcode: $barcode'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                labelText: 'Product Name',
+                hintText: 'Enter product name',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (value) async {
+                if (value.trim().isNotEmpty) {
+                  final normalized = BeverageDbService.instance.normalizeBarcode(barcode);
+                  await BeverageDbService.instance.addOrUpdateUser(normalized, value.trim());
+                  
+                  final notifier = ref.read(pickEntriesProvider.notifier);
+                  await notifier.addEntry(
+                    barcodeOrText: value.trim(),
+                    sectionId: sectionId,
+                  );
+                  
+                  await HapticsService.success();
+                  if (mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Added: ${value.trim()}'),
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  }
                 }
               },
             ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
           ),
-        );
-      }
-    }
+          ElevatedButton(
+            onPressed: () async {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) {
+                final normalized = BeverageDbService.instance.normalizeBarcode(barcode);
+                await BeverageDbService.instance.addOrUpdateUser(normalized, value);
+                
+                final notifier = ref.read(pickEntriesProvider.notifier);
+                await notifier.addEntry(
+                  barcodeOrText: value,
+                  sectionId: sectionId,
+                );
+                
+                await HapticsService.success();
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Added: $value'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showDuplicateChip(String barcode) {
@@ -160,6 +254,20 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         title: Text(selectedSection?.name ?? 'Scanner'),
         backgroundColor: Colors.black87,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.storage),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ViewEditDbScreen(),
+                ),
+              );
+            },
+            tooltip: 'View/Edit Database',
+          ),
+        ],
       ),
       body: Stack(
         children: [
