@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:csv/csv.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/debug_log.dart';
 
 class BeverageDbService {
   static final BeverageDbService _instance = BeverageDbService._internal();
@@ -86,22 +87,51 @@ class BeverageDbService {
   }
 
   String normalizeBarcode(String raw) {
+    final original = raw;
     raw = raw.trim();
     
-    if (raw.length == 8 && (raw.startsWith('00') || raw.startsWith('90'))) {
-      return raw.substring(2, 7);
+    // Clean non-digits first (handles barcodes with dashes, spaces, etc.)
+    String cleaned = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    
+    // Handle concatenated/long scans by taking last 8 digits
+    if (cleaned.length > 8) {
+      cleaned = cleaned.substring(cleaned.length - 8);
     }
     
-    if (raw.length > 5) {
-      return raw.substring(raw.length - 5);
+    String normalized;
+    String branch;
+    
+    // TJ private-label 8-digit barcodes: extract middle 5 digits
+    if (cleaned.length == 8 && (cleaned.startsWith('00') || cleaned.startsWith('90'))) {
+      normalized = cleaned.substring(2, 7);
+      branch = '8-digit TJ';
+    }
+    // Fallback: take last 5 digits for longer codes
+    else if (cleaned.length > 5) {
+      normalized = cleaned.substring(cleaned.length - 5);
+      branch = 'last-5 fallback';
+    }
+    // Short codes: use as-is
+    else {
+      normalized = cleaned;
+      branch = 'short code';
     }
     
-    return raw;
+    dlog('Scan Debug: raw="$original", cleaned="$cleaned", normalized="$normalized", branch=$branch');
+    return normalized;
   }
 
   String? lookupByBarcode(String barcode) {
     final normalized = normalizeBarcode(barcode);
-    return _database[normalized];
+    final name = _database[normalized];
+    
+    if (name != null) {
+      dlog('DB Hit: $normalized -> $name');
+    } else {
+      dlog('DB Miss: $normalized');
+    }
+    
+    return name;
   }
 
   Future<void> addOrUpdateUser(String sku, String productName) async {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/mobile_scanner_adapter.dart';
@@ -8,6 +9,7 @@ import '../services/haptics_service.dart';
 import '../services/beverage_db_service.dart';
 import '../state/app_state.dart';
 import '../widgets/manual_entry_sheet.dart';
+import '../utils/debug_log.dart';
 import 'view_edit_db_screen.dart';
 
 class ScannerScreen extends ConsumerStatefulWidget {
@@ -208,7 +210,79 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
   void _showQuantityDialog(String productName, String entryId) {
     _dialogOpen = true;
+    dlog('QuantityDialog: opened for $productName/$entryId');
     final controller = TextEditingController(text: '1');
+    
+    // Helper to handle quantity addition with validation
+    Future<void> handleQuantityAdd(int? qty) async {
+      if (qty == null) {
+        dlog('QuantityDialog: invalid quantity (null)');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter a valid number'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+        return;
+      }
+      
+      if (qty == 0) {
+        // Delete item with Undo (matches minus-to-zero behavior)
+        dlog('QuantityDialog: delete via qty=0');
+        final notifier = ref.read(pickEntriesProvider.notifier);
+        final entries = ref.read(pickEntriesProvider);
+        final entry = entries.firstWhere((e) => e.id == entryId);
+        
+        final barcode = entry.barcodeOrText;
+        final label = entry.labelText;
+        final sectionId = entry.sectionId;
+        
+        await notifier.deleteEntry(entryId);
+        await HapticsService.success();
+        _dialogOpen = false;
+        Navigator.pop(context);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Removed: ${label ?? barcode}'),
+              duration: const Duration(seconds: 2),
+              action: SnackBarAction(
+                label: 'Undo',
+                onPressed: () async {
+                  dlog('QuantityDialog: undo delete');
+                  await notifier.addEntry(
+                    barcodeOrText: barcode,
+                    labelText: label,
+                    sectionId: sectionId,
+                    qty: 1,
+                  );
+                  HapticsService.success();
+                },
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      
+      if (qty > 0) {
+        dlog('QuantityDialog: add qty=$qty');
+        final notifier = ref.read(pickEntriesProvider.notifier);
+        for (var i = 0; i < qty; i++) {
+          notifier.incrementQuantity(entryId);
+        }
+        HapticsService.success();
+        _dialogOpen = false;
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added $qty more'),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    }
     
     showDialog(
       context: context,
@@ -218,34 +292,22 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('How many more?'),
+            const Text('How many more? (0 to delete)'),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
               autofocus: true,
               keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               textInputAction: TextInputAction.done,
               decoration: const InputDecoration(
                 labelText: 'Quantity',
+                hintText: '0 to delete',
                 border: OutlineInputBorder(),
               ),
-              onSubmitted: (value) {
-                final quantity = int.tryParse(value);
-                if (quantity != null && quantity > 0) {
-                  final notifier = ref.read(pickEntriesProvider.notifier);
-                  for (var i = 0; i < quantity; i++) {
-                    notifier.incrementQuantity(entryId);
-                  }
-                  HapticsService.success();
-                  _dialogOpen = false;
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Added $quantity more'),
-                      duration: const Duration(seconds: 1),
-                    ),
-                  );
-                }
+              onSubmitted: (value) async {
+                final qty = int.tryParse(value);
+                await handleQuantityAdd(qty);
               },
             ),
             const SizedBox(height: 16),
@@ -253,53 +315,23 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton(
-                  onPressed: () {
-                    final notifier = ref.read(pickEntriesProvider.notifier);
-                    notifier.incrementQuantity(entryId);
-                    HapticsService.light();
-                    _dialogOpen = false;
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Added 1 more'),
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
+                  onPressed: () async {
+                    dlog('QuantityDialog: +1');
+                    await handleQuantityAdd(1);
                   },
                   child: const Text('+1'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    final notifier = ref.read(pickEntriesProvider.notifier);
-                    notifier.incrementQuantity(entryId);
-                    notifier.incrementQuantity(entryId);
-                    HapticsService.light();
-                    _dialogOpen = false;
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Added 2 more'),
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
+                  onPressed: () async {
+                    dlog('QuantityDialog: +2');
+                    await handleQuantityAdd(2);
                   },
                   child: const Text('+2'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    final notifier = ref.read(pickEntriesProvider.notifier);
-                    for (var i = 0; i < 5; i++) {
-                      notifier.incrementQuantity(entryId);
-                    }
-                    HapticsService.light();
-                    _dialogOpen = false;
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Added 5 more'),
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
+                  onPressed: () async {
+                    dlog('QuantityDialog: +5');
+                    await handleQuantityAdd(5);
                   },
                   child: const Text('+5'),
                 ),
@@ -310,29 +342,16 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         actions: [
           TextButton(
             onPressed: () {
+              dlog('QuantityDialog: cancel');
               _dialogOpen = false;
               Navigator.pop(context);
             },
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              final quantity = int.tryParse(controller.text);
-              if (quantity != null && quantity > 0) {
-                final notifier = ref.read(pickEntriesProvider.notifier);
-                for (var i = 0; i < quantity; i++) {
-                  notifier.incrementQuantity(entryId);
-                }
-                HapticsService.success();
-                _dialogOpen = false;
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Added $quantity more'),
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              }
+            onPressed: () async {
+              final qty = int.tryParse(controller.text);
+              await handleQuantityAdd(qty);
             },
             child: const Text('Add'),
           ),
