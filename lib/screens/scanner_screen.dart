@@ -23,6 +23,9 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   late MobileScannerAdapter _scannerAdapter;
   StreamSubscription? _scanSubscription;
   bool _isTorchOn = false;
+  bool _isScanning = false;
+  bool _continuousMode = false;
+  bool _processingScan = false;
   String? _lastScannedBarcode;
   DateTime? _lastScanTime;
   bool _dialogOpen = false;
@@ -36,29 +39,45 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   }
 
   Future<void> _initScanner() async {
-    await _scannerAdapter.start();
+    // Set up stream subscription but don't auto-start camera
+    // Camera will start when user taps SCAN button or enables continuous mode
     _scanSubscription = _scannerAdapter.results.listen(_handleScanResult);
+    dlog('Scanner initialized (camera off, tap-to-scan mode)');
   }
 
   void _handleScanResult(ScanResult result) {
-    if (_dialogOpen) return;
+    // Prevent multiple scans while processing or dialog is open
+    if (_dialogOpen || _processingScan) return;
     
     final barcode = result.barcode;
     final now = DateTime.now();
 
-    if (_lastScannedBarcode == barcode &&
-        _lastScanTime != null &&
-        now.difference(_lastScanTime!) < _debounceDuration) {
-      _showDuplicateChip(barcode);
-      return;
+    // Debounce only in continuous mode (not needed in tap-to-scan)
+    if (_continuousMode) {
+      if (_lastScannedBarcode == barcode &&
+          _lastScanTime != null &&
+          now.difference(_lastScanTime!) < _debounceDuration) {
+        _showDuplicateChip(barcode);
+        return;
+      }
     }
 
     _lastScannedBarcode = barcode;
     _lastScanTime = now;
 
+    // Mark as processing to prevent race conditions
+    _processingScan = true;
+    dlog('Scan received: $barcode (continuous=$_continuousMode)');
+
+    // In tap-to-scan mode, stop camera immediately after first scan
+    if (!_continuousMode) {
+      _stopScanning();
+    }
+
     final selectedSection = ref.read(selectedSectionProvider);
     if (selectedSection == null) {
       _showError('Please select a section first');
+      _processingScan = false;
       return;
     }
 
@@ -70,6 +89,23 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     } else {
       _addEntry(barcode, selectedSection.id);
     }
+  }
+
+  Future<void> _stopScanning() async {
+    dlog('Stopping camera (tap-to-scan mode)');
+    await _scannerAdapter.stop();
+    if (mounted) {
+      setState(() {
+        _isScanning = false;
+        _isTorchOn = false; // Turn off torch when stopping
+      });
+    }
+  }
+
+  Future<void> _startScanning() async {
+    dlog('Starting camera');
+    setState(() => _isScanning = true);
+    await _scannerAdapter.start();
   }
 
   Future<void> _addEntry(String barcode, String sectionId) async {
@@ -258,6 +294,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         await notifier.deleteEntry(entryId);
         await HapticsService.success();
         _dialogOpen = false;
+        _processingScan = false;
         Navigator.pop(context);
         
         if (mounted) {
@@ -289,6 +326,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
           // No change, just close dialog
           dlog('QuantityDialog: no change (qty=$currentQty)');
           _dialogOpen = false;
+          _processingScan = false;
           Navigator.pop(context);
           return;
         }
@@ -298,6 +336,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         await notifier.updateQuantity(entryId, newTotal);
         await HapticsService.success();
         _dialogOpen = false;
+        _processingScan = false;
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -368,6 +407,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
             onPressed: () {
               dlog('QuantityDialog: cancel');
               _dialogOpen = false;
+              _processingScan = false;
               Navigator.pop(context);
             },
             child: const Text('Cancel'),
@@ -418,6 +458,98 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     super.dispose();
   }
 
+  Widget _buildScannerBody() {
+    // Show camera preview when scanning (either tap-to-scan or continuous mode)
+    if (_isScanning || _continuousMode) {
+      return Stack(
+        children: [
+          MobileScanner(
+            controller: _scannerAdapter.controller,
+          ),
+          Positioned(
+            top: 20,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _continuousMode 
+                    ? 'Point camera at barcode (continuous mode)'
+                    : 'Point camera at barcode',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 100,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Only show torch when camera is active
+                FloatingActionButton(
+                  heroTag: 'torch',
+                  onPressed: _toggleTorch,
+                  backgroundColor: _isTorchOn ? Colors.yellow : Colors.white,
+                  child: Icon(
+                    _isTorchOn ? Icons.flash_on : Icons.flash_off,
+                    color: Colors.black,
+                  ),
+                ),
+                FloatingActionButton.extended(
+                  heroTag: 'manual',
+                  onPressed: _showManualEntry,
+                  backgroundColor: Colors.blue,
+                  icon: const Icon(Icons.keyboard),
+                  label: const Text('Manual Entry'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Show big SCAN button when camera is off (tap-to-scan mode)
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            height: 80,
+            child: FloatingActionButton.extended(
+              heroTag: 'scan',
+              onPressed: _startScanning,
+              backgroundColor: Colors.green,
+              icon: const Icon(Icons.qr_code_scanner, size: 32),
+              label: const Text(
+                'SCAN',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          FloatingActionButton.extended(
+            heroTag: 'manual_idle',
+            onPressed: _showManualEntry,
+            backgroundColor: Colors.blue,
+            icon: const Icon(Icons.keyboard),
+            label: const Text('Manual Entry'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedSection = ref.watch(selectedSectionProvider);
@@ -447,61 +579,38 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
             },
             tooltip: 'View/Edit Database',
           ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: _scannerAdapter.controller,
-          ),
-          Positioned(
-            top: 20,
-            left: 20,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'Point camera at barcode',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: 100,
-            left: 0,
-            right: 0,
+          // Continuous scan toggle
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                FloatingActionButton(
-                  heroTag: 'torch',
-                  onPressed: _toggleTorch,
-                  backgroundColor: _isTorchOn ? Colors.yellow : Colors.white,
-                  child: Icon(
-                    _isTorchOn ? Icons.flash_on : Icons.flash_off,
-                    color: Colors.black,
-                  ),
+                const Text(
+                  'Continuous',
+                  style: TextStyle(fontSize: 12),
                 ),
-                FloatingActionButton.extended(
-                  heroTag: 'manual',
-                  onPressed: _showManualEntry,
-                  backgroundColor: Colors.blue,
-                  icon: const Icon(Icons.keyboard),
-                  label: const Text('Manual Entry'),
+                Switch(
+                  value: _continuousMode,
+                  onChanged: (value) async {
+                    setState(() => _continuousMode = value);
+                    dlog('Continuous mode: $value');
+                    
+                    if (value) {
+                      // Enable continuous mode: start camera
+                      await _startScanning();
+                    } else {
+                      // Disable continuous mode: stop camera and return to tap-to-scan
+                      await _stopScanning();
+                    }
+                  },
+                  activeTrackColor: Colors.green,
                 ),
               ],
             ),
           ),
         ],
       ),
+      body: _buildScannerBody(),
     );
   }
 }

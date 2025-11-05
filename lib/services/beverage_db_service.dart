@@ -17,8 +17,14 @@ class BeverageDbService {
   Future<void> init() async {
     if (_isInitialized) return;
 
+    final baseCount = _database.length;
     await _loadBaseDatabase();
+    final afterBase = _database.length;
+    
     await _loadUserAddedDatabase();
+    final total = _database.length;
+    
+    dlog('DB Init: base=${afterBase - baseCount}, user=${total - afterBase}, total=$total');
     
     _isInitialized = true;
   }
@@ -62,6 +68,8 @@ class BeverageDbService {
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/user_added.csv');
       
+      int userEntriesCount = 0;
+      
       if (await file.exists()) {
         final csvString = await file.readAsString();
         final List<List<dynamic>> csvData = const CsvToListConverter().convert(csvString);
@@ -75,11 +83,15 @@ class BeverageDbService {
             
             if (sku.isNotEmpty && productName.isNotEmpty) {
               _database[sku] = productName;
+              userEntriesCount++;
             }
           }
         }
         
-        print('Loaded user-added products from user_added.csv');
+        dlog('User DB: Loaded $userEntriesCount entries from user_added.csv');
+        print('Loaded $userEntriesCount user-added products from user_added.csv');
+      } else {
+        dlog('User DB: No user_added.csv found (first run)');
       }
     } catch (e) {
       print('Error loading user-added database: $e');
