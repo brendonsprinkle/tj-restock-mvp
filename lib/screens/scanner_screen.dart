@@ -560,15 +560,22 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         backgroundColor: Colors.black87,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.list),
+          TextButton.icon(
+            icon: const Icon(Icons.list, color: Colors.white),
+            label: const Text(
+              'Pick List',
+              style: TextStyle(color: Colors.white, fontSize: 12),
+            ),
             onPressed: () {
               Navigator.pushNamed(context, '/picklist');
             },
-            tooltip: 'View Pick List',
           ),
-          IconButton(
-            icon: const Icon(Icons.storage),
+          TextButton.icon(
+            icon: const Icon(Icons.storage, color: Colors.white),
+            label: const Text(
+              'Products',
+              style: TextStyle(color: Colors.white, fontSize: 12),
+            ),
             onPressed: () {
               Navigator.push(
                 context,
@@ -577,7 +584,6 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 ),
               );
             },
-            tooltip: 'View/Edit Database',
           ),
           // Continuous scan toggle
           Padding(
