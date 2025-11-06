@@ -48,7 +48,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 
   Future<void> _handleScanResult(ScanResult result) async {
     // Prevent multiple scans while processing or dialog is open
-    if (_dialogOpen || _processingScan) return;
+    if (_dialogOpen || _processingScan) {
+      dlog('Scan ignored: dialogOpen=$_dialogOpen, processingScan=$_processingScan');
+      return;
+    }
     
     final barcode = result.barcode;
     final now = DateTime.now();
@@ -70,27 +73,34 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     _processingScan = true;
     dlog('Scan received: $barcode (continuous=$_continuousMode)');
 
-    // In tap-to-scan mode, stop camera immediately after first scan
-    // IMPORTANT: Await stop() to prevent iOS capture session race conditions
-    if (!_continuousMode) {
-      await _stopScanning();
-      dlog('Camera stopped, ready for next scan');
-    }
+    try {
+      // In tap-to-scan mode, stop camera immediately after first scan
+      // IMPORTANT: Await stop() to prevent iOS capture session race conditions
+      if (!_continuousMode) {
+        await _stopScanning();
+        dlog('Camera stopped, ready for next scan');
+      }
 
-    final selectedSection = ref.read(selectedSectionProvider);
-    if (selectedSection == null) {
-      _showError('Please select a section first');
+      final selectedSection = ref.read(selectedSectionProvider);
+      if (selectedSection == null) {
+        _showError('Please select a section first');
+        return;
+      }
+
+      final notifier = ref.read(pickEntriesProvider.notifier);
+      final hasEntry = notifier.hasEntryWithBarcode(barcode, selectedSection.id);
+
+      if (hasEntry) {
+        await _showDuplicateChip(barcode);
+      } else {
+        await _addEntry(barcode, selectedSection.id);
+      }
+    } catch (e, st) {
+      debugPrint('Scan handling error: $e\n$st');
+    } finally {
+      // CRITICAL: Always reset _processingScan to allow next scan
       _processingScan = false;
-      return;
-    }
-
-    final notifier = ref.read(pickEntriesProvider.notifier);
-    final hasEntry = notifier.hasEntryWithBarcode(barcode, selectedSection.id);
-
-    if (hasEntry) {
-      _showDuplicateChip(barcode);
-    } else {
-      _addEntry(barcode, selectedSection.id);
+      dlog('Processing complete, ready for next scan');
     }
   }
 
@@ -112,8 +122,12 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
       return;
     }
 
+    // Clear any stale flags from previous flows (safety measure)
+    _processingScan = false;
+    _dialogOpen = false;
+
     _isStarting = true;
-    dlog('SCAN button pressed: Starting controller');
+    dlog('SCAN button pressed: isStarting=$_isStarting, isScanning=$_isScanning, processingScan=$_processingScan');
 
     try {
       // Set scanning state first
@@ -269,7 +283,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     );
   }
 
-  void _showDuplicateChip(String barcode) {
+  Future<void> _showDuplicateChip(String barcode) async {
     final selectedSection = ref.read(selectedSectionProvider);
     if (selectedSection == null) return;
 
@@ -277,11 +291,11 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     final entry = notifier.getEntryByBarcode(barcode, selectedSection.id);
 
     if (entry != null && mounted) {
-      _showQuantityDialog(entry.labelText ?? entry.barcodeOrText, entry.id);
+      await _showQuantityDialog(entry.labelText ?? entry.barcodeOrText, entry.id);
     }
   }
 
-  void _showQuantityDialog(String productName, String entryId) {
+  Future<void> _showQuantityDialog(String productName, String entryId) async {
     _dialogOpen = true;
     
     // Get current quantity to pre-fill the dialog
@@ -331,7 +345,6 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         await notifier.deleteEntry(entryId);
         await HapticsService.success();
         _dialogOpen = false;
-        _processingScan = false;
         Navigator.pop(context);
         
         if (mounted) {
@@ -363,7 +376,6 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
           // No change, just close dialog
           dlog('QuantityDialog: no change (qty=$currentQty)');
           _dialogOpen = false;
-          _processingScan = false;
           Navigator.pop(context);
           return;
         }
@@ -373,7 +385,6 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         await notifier.updateQuantity(entryId, newTotal);
         await HapticsService.success();
         _dialogOpen = false;
-        _processingScan = false;
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -384,7 +395,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
       }
     }
     
-    showDialog(
+    await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
@@ -444,7 +455,6 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
             onPressed: () {
               dlog('QuantityDialog: cancel');
               _dialogOpen = false;
-              _processingScan = false;
               Navigator.pop(context);
             },
             child: const Text('Cancel'),
