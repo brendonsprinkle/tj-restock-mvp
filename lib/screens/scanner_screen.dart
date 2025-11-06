@@ -24,6 +24,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   StreamSubscription? _scanSubscription;
   bool _isTorchOn = false;
   bool _isScanning = false;
+  bool _isStarting = false; // Guard against double-tap starts
   bool _continuousMode = false;
   bool _processingScan = false;
   String? _lastScannedBarcode;
@@ -45,7 +46,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     dlog('Scanner initialized (camera off, tap-to-scan mode)');
   }
 
-  void _handleScanResult(ScanResult result) {
+  Future<void> _handleScanResult(ScanResult result) async {
     // Prevent multiple scans while processing or dialog is open
     if (_dialogOpen || _processingScan) return;
     
@@ -70,8 +71,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     dlog('Scan received: $barcode (continuous=$_continuousMode)');
 
     // In tap-to-scan mode, stop camera immediately after first scan
+    // IMPORTANT: Await stop() to prevent iOS capture session race conditions
     if (!_continuousMode) {
-      _stopScanning();
+      await _stopScanning();
+      dlog('Camera stopped, ready for next scan');
     }
 
     final selectedSection = ref.read(selectedSectionProvider);
@@ -103,9 +106,43 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   }
 
   Future<void> _startScanning() async {
-    dlog('Starting camera');
-    setState(() => _isScanning = true);
-    await _scannerAdapter.start();
+    // Guard against double-tap or starting while already starting
+    if (_isStarting || _isScanning) {
+      dlog('Start ignored: already starting or scanning');
+      return;
+    }
+
+    _isStarting = true;
+    dlog('SCAN button pressed: Starting controller');
+
+    try {
+      // Set scanning state first
+      if (mounted) {
+        setState(() => _isScanning = true);
+      }
+
+      // Use post-frame callback to ensure MobileScanner widget is in tree
+      // This prevents timing issues on iOS where start() is called before preview mounts
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          await _scannerAdapter.start();
+          dlog('Controller started successfully');
+        } catch (e) {
+          debugPrint('Scanner start error: $e');
+          if (mounted) {
+            setState(() => _isScanning = false);
+          }
+        } finally {
+          _isStarting = false;
+        }
+      });
+    } catch (e) {
+      debugPrint('Start scanning setup error: $e');
+      if (mounted) {
+        setState(() => _isScanning = false);
+      }
+      _isStarting = false;
+    }
   }
 
   Future<void> _addEntry(String barcode, String sectionId) async {
